@@ -1,0 +1,35 @@
+# Allowlist of apps TARS may open and close. The key is the name the LLM passes to the tools.
+# To add an app: add an entry here. Nothing else needs to change.
+# paths   : tried in order to open the app. Environment variables like %LOCALAPPDATA% work.
+#           A bare name like "code" is looked up on PATH.
+# process : the .exe name used to close it (see Task Manager > Details). No process = cannot close.
+apps:
+  vscode:
+    label: Visual Studio Code
+    process: Code.exe
+    paths:
+      - '%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe'
+      - '%ProgramFiles%\Microsoft VS Code\Code.exe'
+      - 'code'
+  chrome:
+    label: Chrome
+    process: chrome.exe          # closes ALL Chrome windows, including the TARS video window
+    paths:
+      - '%ProgramFiles%\Google\Chrome\Application\chrome.exe'
+      - '%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe'
+      - '%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'
+  notepad:
+    label: Notepad
+    process: Notepad.exe
+    paths:
+      - 'notepad.exe'
+  calculator:
+    label: Calculator
+    process: CalculatorApp.exe
+    paths:
+      - 'calc.exe'
+  file_explorer:
+    label: File Explorer
+    close: explorer              # closes the folder windows only, never the taskbar
+    paths:
+      - 'explorer.exe'

@@ -42,11 +42,14 @@ class Recorder:
         self.preroll_frames = preroll_ms // FRAME_MS
         self.min_speech_frames = min_speech_ms // FRAME_MS
 
-    def record_until_silence(self):
+    def record_until_silence(self, timeout=None):
         """Listen, start on first speech, stop after silence.
 
-        Returns a float32 numpy array, or None if no speech was detected.
+        timeout: seconds to wait for speech to start (None = the default,
+        float("inf") = wait forever). Returns a float32 numpy array, or None
+        if no speech was detected.
         """
+        limit = self.no_speech_timeout if timeout is None else timeout
         preroll = collections.deque(maxlen=self.preroll_frames)
         frames = []
         started = False
@@ -73,7 +76,7 @@ class Recorder:
                         started = True
                         frames.extend(preroll)
                         speech_frames = 1
-                    elif elapsed > self.no_speech_timeout:
+                    elif elapsed > limit:
                         return None
                 else:
                     frames.append(frame)
@@ -105,9 +108,12 @@ class Recorder:
         sd.wait()
         return audio.flatten()
 
-    def record_push_to_talk(self, hotkey="f9"):
-        """Block until the hotkey is pressed, then record until silence."""
+    def record_push_to_talk(self, hotkey="f9", on_start=None):
+        """Block until the hotkey is pressed, then record until silence.
+        on_start (optional) is called right after the key press, e.g. to beep."""
         import keyboard  # imported here so other functions work without it
 
         keyboard.wait(hotkey)
+        if on_start:
+            on_start()
         return self.record_until_silence()

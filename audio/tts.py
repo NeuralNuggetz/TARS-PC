@@ -1,13 +1,17 @@
-"""Phase 5: text-to-speech.
+"""Text-to-speech.
 
 Main voice : edge-tts (natural, needs internet)
 Fallback   : pyttsx3 (offline, robotic)
 Barge-in   : press the interrupt key while it speaks to stop immediately
+Streaming  : SpeechStream speaks sentence by sentence while the answer is still
+             being generated (synthesis overlaps playback).
 """
 import asyncio
 import os
+import queue
 import re
 import tempfile
+import threading
 import time
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -49,6 +53,13 @@ def fix_pronunciation(text: str) -> str:
     return text
 
 
+def _remove(path: str):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 class Speaker:
     def __init__(
         self,
@@ -72,7 +83,11 @@ class Speaker:
         if not text:
             return True
         try:
-            completed = self._speak_edge(text)
+            path = self._synth_to_file(text)
+            try:
+                completed = self._play_file(path)
+            finally:
+                _remove(path)
             self.last_engine = "edge-tts"
             return completed
         except Exception as err:
@@ -81,41 +96,49 @@ class Speaker:
             self.last_engine = "pyttsx3"
             return True
 
+    def begin_stream(self) -> "SpeechStream":
+        """Start speaking text as it arrives. Call feed() then finish()."""
+        return SpeechStream(self)
+
     # ---------- edge-tts ----------
-    def _speak_edge(self, text: str) -> bool:
+    def _synth_to_file(self, text: str) -> str:
+        """Generate speech and return the path of a temporary mp3 file."""
         import edge_tts
-        import pygame
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tmp.close()
+
+        async def _generate():
+            comm = edge_tts.Communicate(
+                text, self.voice, rate=self.rate, volume=self.volume
+            )
+            await comm.save(tmp.name)
+
         try:
-            async def _generate():
-                comm = edge_tts.Communicate(
-                    text, self.voice, rate=self.rate, volume=self.volume
-                )
-                await comm.save(tmp.name)
-
             asyncio.run(_generate())
+        except Exception:
+            _remove(tmp.name)
+            raise
+        return tmp.name
 
-            if not pygame.mixer.get_init():
-                pygame.mixer.init()
-            pygame.mixer.music.load(tmp.name)
-            pygame.mixer.music.play()
+    def _play_file(self, path: str) -> bool:
+        """Play an mp3. Returns False if the user pressed the interrupt key."""
+        import pygame
 
-            interrupted = False
-            while pygame.mixer.music.get_busy():
-                if self._interrupt_pressed():
-                    pygame.mixer.music.stop()
-                    interrupted = True
-                    break
-                time.sleep(0.05)
-            pygame.mixer.music.unload()   # release the file so Windows can delete it
-            return not interrupted
-        finally:
-            try:
-                os.remove(tmp.name)
-            except OSError:
-                pass
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play()
+
+        interrupted = False
+        while pygame.mixer.music.get_busy():
+            if self._interrupt_pressed():
+                pygame.mixer.music.stop()
+                interrupted = True
+                break
+            time.sleep(0.05)
+        pygame.mixer.music.unload()   # release the file so Windows can delete it
+        return not interrupted
 
     def _interrupt_pressed(self) -> bool:
         if not self.interrupt_key:
@@ -135,3 +158,104 @@ class Speaker:
         engine.say(text)
         engine.runAndWait()
         engine.stop()
+
+
+class SpeechStream:
+    """Speaks text sentence by sentence as it arrives.
+
+    Two worker threads: one turns sentences into audio, the other plays them in
+    order, so the next sentence is ready before the current one finishes.
+
+        stream = speaker.begin_stream()
+        stream.feed("Hello there. ")      # call as often as you like
+        completed = stream.finish()       # blocks until everything has been spoken
+    """
+
+    _SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+    MIN_CHARS = 40   # shorter sentences are merged with the next one
+
+    def __init__(self, speaker: Speaker):
+        self.sp = speaker
+        self.buffer = ""
+        self.pending = ""
+        self.sent_chars = 0
+        self.first_audio_at = None        # time.time() when sound first started
+        self.stop = threading.Event()
+        self._text_q = queue.Queue()
+        self._audio_q = queue.Queue()
+        self._synth_thread = threading.Thread(target=self._synth_loop, daemon=True)
+        self._play_thread = threading.Thread(target=self._play_loop, daemon=True)
+        self._synth_thread.start()
+        self._play_thread.start()
+
+    @property
+    def interrupted(self) -> bool:
+        return self.stop.is_set()
+
+    # ---------- producer side ----------
+    def feed(self, text: str):
+        if self.stop.is_set() or not text:
+            return
+        self.buffer += text
+        *done, self.buffer = self._SPLIT.split(self.buffer)
+        for sentence in done:
+            self.pending = f"{self.pending} {sentence}".strip()
+            if len(self.pending) >= self.MIN_CHARS:
+                self._emit(self.pending)
+                self.pending = ""
+
+    def finish(self) -> bool:
+        """Flush the rest, wait until speech ends. Returns False if interrupted."""
+        if not self.stop.is_set():
+            self._emit(f"{self.pending} {self.buffer}".strip())
+        self.pending = self.buffer = ""
+        self._text_q.put(None)
+        self._play_thread.join()
+        return not self.stop.is_set()
+
+    def _emit(self, text: str):
+        clean = fix_pronunciation(clean_text(text))
+        if not clean or self.sent_chars + len(clean) > self.sp.max_chars:
+            return
+        self.sent_chars += len(clean)
+        self._text_q.put(clean)
+
+    # ---------- worker threads ----------
+    def _synth_loop(self):
+        try:
+            while True:
+                text = self._text_q.get()
+                if text is None or self.stop.is_set():
+                    break
+                try:
+                    self._audio_q.put(("file", self.sp._synth_to_file(text)))
+                except Exception as err:
+                    print(f"[tts] edge-tts failed ({err}). Using offline voice.")
+                    self._audio_q.put(("offline", text))
+        finally:
+            self._audio_q.put(None)
+
+    def _play_loop(self):
+        try:
+            while True:
+                item = self._audio_q.get()
+                if item is None:
+                    break
+                kind, payload = item
+                if kind == "file":
+                    try:
+                        if self.stop.is_set():
+                            continue
+                        if self.first_audio_at is None:
+                            self.first_audio_at = time.time()
+                        if not self.sp._play_file(payload):
+                            self.stop.set()
+                    finally:
+                        _remove(payload)
+                elif not self.stop.is_set():
+                    if self.first_audio_at is None:
+                        self.first_audio_at = time.time()
+                    self.sp._speak_offline(payload)
+        except Exception as err:
+            print(f"[tts] playback error: {err}")
+            self.stop.set()

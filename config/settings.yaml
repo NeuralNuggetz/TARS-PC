@@ -1,0 +1,18 @@
+# TARS settings. Edit values here; no code changes needed.
+activation: wake            # "wake" = say "Hey TARS", "hotkey" = press the hotkey instead
+wake_aliases: [tars, tarz, tass, tarse]   # how Whisper might spell "TARS". Add more if it mishears.
+user_name: Cooper
+greeting: "Hi {name}, how can I help you?"
+command_wait_seconds: 6     # after the greeting, how long TARS waits for your command
+followup_seconds: 5         # after a reply, keep listening without the wake word (0 = off)
+
+hotkey: f9                  # push-to-talk key, and the key that stops TARS while it speaks
+mic_device: null            # null = Windows default mic, or a device index from test_audio
+silence_ms: 900             # how long a pause ends your command
+whisper_model: base.en      # try small.en for better accuracy
+whisper_language: en        # use null with a multilingual model for auto-detect
+tts_voice: en-US-GuyNeural  # run: edge-tts --list-voices
+tts_rate: "+0%"             # e.g. "+10%" faster
+humor: 30                   # 0-100, like the movie
+beep: true                  # hotkey mode only: beep when listening starts
+reasoning_effort: null   # speed: try "low" or "minimal" (depends on the model; invalid value = error)

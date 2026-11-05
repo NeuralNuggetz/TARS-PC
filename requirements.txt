@@ -1,45 +1,48 @@
 # ===== TARS: Task And Reply System =====
 # Python 3.11 | Windows 11
 # Install: pip install -r requirements.txt
- 
+
 # --- Config and utilities ---
 python-dotenv
 pyyaml
 numpy
- 
+
 # --- Audio input (mic capture + silence detection) ---
 sounddevice
 soundfile
 webrtcvad-wheels        # prebuilt VAD for Windows (avoids C++ build tools)
- 
+
 # --- Hotkey / push-to-talk ---
 keyboard
- 
+
 # --- Speech-to-text (local) ---
 faster-whisper
- 
+
 # --- Brain (LangGraph agent + LLM) ---
 langgraph
 langchain
 langchain-core
 langchain-anthropic     # if using Claude
 langchain-openai        # if using OpenAI (remove the one you don't use)
- 
+
 # --- Web search for live questions ---
 tavily-python
- 
+
 # --- Text-to-speech ---
 edge-tts                # main voice (needs internet)
 pyttsx3                 # offline fallback
 pygame                  # audio playback for edge-tts output
- 
+
+# --- YouTube playback (find the video) ---
+yt-dlp
+
 # --- Windows task tools ---
 pyautogui               # keyboard/mouse control, screenshots
 pillow                  # image handling for screenshots
 pycaw                   # volume control on Windows
 comtypes                # required by pycaw
 psutil                  # battery, CPU, running apps
- 
+
 # --- Phase 11 (add later) ---
 # pvporcupine           # wake word
 # pystray               # system tray icon

@@ -31,7 +31,7 @@ from faster_whisper import WhisperModel  # noqa: E402
 # Hint text helps Whisper spell your app names correctly.
 # Add your own apps and words here.
 DEFAULT_PROMPT = (
-    "Voice commands for a Windows PC assistant named TARS. "
+    "Voice commands for a Windows PC assistant named TARS. The wake phrase is Hey TARS. "
     "Apps: VS Code, Chrome, Notepad, Calculator, File Explorer. "
     "Sites: YouTube, GitHub, Google."
 )
