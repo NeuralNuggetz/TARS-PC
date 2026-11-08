@@ -2,12 +2,13 @@
 from tools.apps import close_app, close_tab, open_app
 from tools.browser import open_website, search_in_browser
 from tools.media import play_youtube
+from tools.screen import show_on_screen
 from tools.system import system_control
 from tools.web_search import web_search
 
 TOOLS = [
     open_app, close_app, close_tab, search_in_browser, open_website,
-    play_youtube, system_control, web_search,
+    play_youtube, system_control, show_on_screen, web_search,
 ]
 
 # Tools whose result is already a good spoken reply. After they run, the turn ends
@@ -21,4 +22,5 @@ DIRECT_TOOLS = {
     "open_website",
     "play_youtube",
     "system_control",
+    "show_on_screen",
 }

@@ -5,12 +5,16 @@ Wake mode (default):
     or in one go:  "TARS, open VS Code"
     After a reply, TARS keeps listening for a few seconds, so follow-ups need no wake word.
 Hotkey mode: press the hotkey and speak.
+Overlay: a small pill at the top of the screen shows what TARS is doing, and
+    expands to show text when you say "show it on the screen".
 
 Run from the project root:  uv run python main.py
 Say "goodbye" or press Ctrl+C to quit.
 """
 import logging
 import re
+import signal
+import sys
 import threading
 import time
 from logging.handlers import RotatingFileHandler
@@ -21,6 +25,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent
 
 DEFAULTS = {
+    "gui": True,
+    "gui_captions": False,
     "activation": "wake",
     "wake_aliases": ["tars", "tarz", "tass", "tarse"],
     "user_name": "Cooper",
@@ -42,6 +48,10 @@ DEFAULTS = {
 # Handled locally so they are instant and never need the LLM.
 EXIT_PHRASES = {"exit", "quit", "goodbye", "good bye", "stop listening", "go to sleep"}
 RESET_PHRASES = {"reset", "forget that", "new conversation", "clear memory"}
+HIDE_PHRASES = {
+    "hide that", "hide it", "hide the panel", "hide the screen", "dismiss",
+    "clear the screen", "close the panel",
+}
 
 
 def load_settings() -> dict:
@@ -94,7 +104,7 @@ def split_wake(text: str, regex):
 
 
 def local_command(text: str):
-    """Return 'exit', 'reset' or None for commands TARS handles itself."""
+    """Return 'exit', 'reset', 'hide' or None for commands TARS handles itself."""
     words = re.sub(r"[^a-z ]", "", text.lower()).strip()
     if words.startswith("tars "):
         words = words[5:].strip()
@@ -102,11 +112,23 @@ def local_command(text: str):
         return "exit"
     if words in RESET_PHRASES:
         return "reset"
+    if words in HIDE_PHRASES:
+        return "hide"
     return None
 
 
-def main():
-    settings = load_settings()
+def assistant(settings: dict, ui):
+    """The voice loop. `ui` is the overlay controller (or a NullUi)."""
+    try:
+        _assistant(settings, ui)
+    except Exception:
+        logging.getLogger("tars").exception("assistant crashed")
+        raise
+    finally:
+        ui.quit()
+
+
+def _assistant(settings: dict, ui):
     log = setup_logging()
 
     # Heavy imports here so the module itself stays light.
@@ -114,6 +136,7 @@ def main():
     from audio.stt import Transcriber
     from audio.tts import Speaker
     from brain.agent import Brain
+    from tools.screen import set_display
 
     print("Starting TARS...")
     hotkey = settings["hotkey"]
@@ -129,25 +152,34 @@ def main():
         voice=settings["tts_voice"], rate=settings["tts_rate"], interrupt_key=hotkey
     )
     brain = Brain(humor=settings["humor"], reasoning_effort=settings["reasoning_effort"])
+    set_display(ui.show_text if settings["gui"] else None)
 
     def process(command: str):
         """Run one command. Returns (quit?, user cut TARS off?)."""
         cmd = local_command(command)
         if cmd == "exit":
+            ui.set_state("speaking")
             spk.speak("Goodbye.")
             return True, False
         if cmd == "reset":
             brain.reset()
+            ui.set_state("speaking")
             spk.speak("Memory cleared.")
             return False, False
+        if cmd == "hide":
+            ui.collapse()
+            return False, False
 
+        ui.set_state("thinking")
         t0 = time.time()
-        stream = spk.begin_stream()                     # speech starts as soon as the first sentence is ready
+        stream = spk.begin_stream(on_audio_start=lambda: ui.set_state("speaking"))
         answer, tools = brain.run(command, on_token=stream.feed)
         t_brain = time.time() - t0
         if not brain.streamed:
             stream.feed(answer)                         # direct tool results and error messages
         print(f"TARS : {answer}")
+        if settings["gui_captions"] and "show_on_screen" not in tools:
+            ui.show_text("", answer)
         completed = stream.finish()
         first_audio = (stream.first_audio_at - t0) if stream.first_audio_at else 0.0
         print(
@@ -171,6 +203,7 @@ def main():
 
     threading.Thread(target=warm_up, daemon=True).start()   # runs while TARS greets you
 
+    ui.set_state("speaking")
     spk.speak("TARS online.")
     if mode == "wake":
         print("Say 'Hey TARS' (or just 'TARS' followed by a command). Ctrl+C to quit.")
@@ -181,6 +214,7 @@ def main():
         try:
             if mode == "wake":
                 # ---- listen for an utterance ----
+                ui.set_state("idle" if window is None else "listening")
                 timeout = float("inf") if window is None else window
                 audio = rec.record_until_silence(timeout=timeout)
                 if audio is None:
@@ -201,7 +235,9 @@ def main():
 
                 # "Hey TARS" alone: greet, then wait for the command
                 if woke and not command:
+                    ui.set_state("speaking")
                     spk.speak(greeting)
+                    ui.set_state("listening")
                     audio = rec.record_until_silence(timeout=settings["command_wait_seconds"])
                     command = stt.transcribe(audio) if audio is not None else ""
                     if not command:
@@ -212,12 +248,15 @@ def main():
                 # ---- hotkey mode ----
                 if cut_off:
                     print("Listening...")
+                    ui.set_state("listening")
                     beep(settings)
                     audio = rec.record_until_silence()
                 else:
+                    ui.set_state("idle")
                     print(f"\nPress {hotkey.upper()} and speak...")
                     audio = rec.record_push_to_talk(
-                        hotkey, on_start=lambda: (print("Listening..."), beep(settings))
+                        hotkey,
+                        on_start=lambda: (print("Listening..."), ui.set_state("listening"), beep(settings)),
                     )
                 was_cut_off, cut_off = cut_off, False
                 if audio is None:
@@ -247,12 +286,44 @@ def main():
         except Exception as err:
             log.exception("loop error")
             print(f"[error] {err}")
+            ui.set_state("idle")
             try:
                 spk.speak("Something went wrong.")
             except Exception:
                 pass
             window = None
             time.sleep(2)
+
+
+def main():
+    settings = load_settings()
+
+    if settings["gui"]:
+        try:
+            from ui.overlay import build
+        except ImportError as err:
+            print(f"[gui] PySide6 not available ({err}). Run: uv pip install PySide6")
+            settings["gui"] = False
+
+    if not settings["gui"]:
+        from ui import NullUi
+
+        assistant(settings, NullUi())
+        return
+
+    from PySide6.QtCore import QTimer
+
+    app, overlay, ui = build()
+    worker = threading.Thread(target=assistant, args=(settings, ui), daemon=True)
+    worker.start()
+
+    # Let Ctrl+C work while the Qt event loop is running.
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    keepalive = QTimer()
+    keepalive.timeout.connect(lambda: None)
+    keepalive.start(250)
+
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

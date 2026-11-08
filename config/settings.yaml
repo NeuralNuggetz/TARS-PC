@@ -1,3 +1,5 @@
+gui: true                   # small TARS pill at the top of the screen (needs PySide6)
+gui_captions: false         # also show every reply as text in the panel
 # TARS settings. Edit values here; no code changes needed.
 activation: wake            # "wake" = say "Hey TARS", "hotkey" = press the hotkey instead
 wake_aliases: [tars, tarz, tass, tarse]   # how Whisper might spell "TARS". Add more if it mishears.

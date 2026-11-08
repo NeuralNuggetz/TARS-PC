@@ -96,9 +96,10 @@ class Speaker:
             self.last_engine = "pyttsx3"
             return True
 
-    def begin_stream(self) -> "SpeechStream":
-        """Start speaking text as it arrives. Call feed() then finish()."""
-        return SpeechStream(self)
+    def begin_stream(self, on_audio_start=None) -> "SpeechStream":
+        """Start speaking text as it arrives. Call feed() then finish().
+        on_audio_start is called once, when the first sound begins."""
+        return SpeechStream(self, on_audio_start)
 
     # ---------- edge-tts ----------
     def _synth_to_file(self, text: str) -> str:
@@ -174,8 +175,9 @@ class SpeechStream:
     _SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
     MIN_CHARS = 40   # shorter sentences are merged with the next one
 
-    def __init__(self, speaker: Speaker):
+    def __init__(self, speaker: Speaker, on_audio_start=None):
         self.sp = speaker
+        self.on_audio_start = on_audio_start
         self.buffer = ""
         self.pending = ""
         self.sent_chars = 0
@@ -235,6 +237,15 @@ class SpeechStream:
         finally:
             self._audio_q.put(None)
 
+    def _mark_audio_start(self):
+        if self.first_audio_at is None:
+            self.first_audio_at = time.time()
+            if self.on_audio_start:
+                try:
+                    self.on_audio_start()
+                except Exception:
+                    pass
+
     def _play_loop(self):
         try:
             while True:
@@ -246,15 +257,13 @@ class SpeechStream:
                     try:
                         if self.stop.is_set():
                             continue
-                        if self.first_audio_at is None:
-                            self.first_audio_at = time.time()
+                        self._mark_audio_start()
                         if not self.sp._play_file(payload):
                             self.stop.set()
                     finally:
                         _remove(payload)
                 elif not self.stop.is_set():
-                    if self.first_audio_at is None:
-                        self.first_audio_at = time.time()
+                    self._mark_audio_start()
                     self.sp._speak_offline(payload)
         except Exception as err:
             print(f"[tts] playback error: {err}")

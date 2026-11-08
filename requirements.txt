@@ -36,6 +36,9 @@ pygame                  # audio playback for edge-tts output
 # --- YouTube playback (find the video) ---
 yt-dlp
 
+# --- On-screen overlay ---
+PySide6
+
 # --- Windows task tools ---
 pyautogui               # keyboard/mouse control, screenshots
 pillow                  # image handling for screenshots
